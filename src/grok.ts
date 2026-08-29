@@ -1,8 +1,12 @@
 import {
 	abortableDelay,
 	createRequestSignal,
+	decodeBase64Image,
+	mimeFromBytes,
 	retryDelayMs,
 	type AspectRatio,
+	type GrokQuality,
+	type GrokResolution,
 } from "./core.ts";
 
 const MAX_RETRIES = 3;
@@ -10,11 +14,17 @@ const REQUEST_TIMEOUT_MS = 120_000;
 
 export interface GrokGenerationResult {
 	b64: string;
-	mimeType: "image/jpeg";
+	mimeType: "image/png" | "image/jpeg" | "image/webp";
 }
 
 function retryable(status: number): boolean {
-	return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+	return (
+		status === 408 ||
+		status === 409 ||
+		status === 425 ||
+		status === 429 ||
+		status >= 500
+	);
 }
 
 async function responseError(response: Response): Promise<string> {
@@ -49,11 +59,20 @@ export async function generateGrokImage(options: {
 	prompt: string;
 	model: string;
 	aspectRatio?: AspectRatio;
-	resolution?: "1k";
+	resolution?: GrokResolution;
+	quality?: GrokQuality;
 	baseUrl?: string;
 	signal?: AbortSignal;
 	fetchImpl?: typeof fetch;
 }): Promise<GrokGenerationResult> {
+	if (
+		options.quality !== undefined &&
+		!options.model.startsWith("grok-imagine-image-2")
+	) {
+		throw new Error(
+			"Grok quality is supported only by grok-imagine-image-2.0 models.",
+		);
+	}
 	const fetchImpl = options.fetchImpl ?? fetch;
 	const baseUrl = (
 		options.baseUrl ??
@@ -63,7 +82,8 @@ export async function generateGrokImage(options: {
 	).replace(/\/+$/, "");
 
 	for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
-		if (options.signal?.aborted) throw new Error("Image generation was cancelled.");
+		if (options.signal?.aborted)
+			throw new Error("Image generation was cancelled.");
 		const request = createRequestSignal(options.signal, REQUEST_TIMEOUT_MS);
 		let retryAfter: string | null = null;
 		try {
@@ -81,6 +101,7 @@ export async function generateGrokImage(options: {
 					n: 1,
 					aspect_ratio: options.aspectRatio ?? "1:1",
 					resolution: options.resolution ?? "1k",
+					...(options.quality ? { quality: options.quality } : {}),
 					response_format: "b64_json",
 				}),
 				signal: request.signal,
@@ -102,10 +123,28 @@ export async function generateGrokImage(options: {
 						"Grok Imagine returned a malformed response: missing image data.",
 					);
 				}
-				return { b64, mimeType: "image/jpeg" };
+				let mimeType: ReturnType<typeof mimeFromBytes>;
+				try {
+					mimeType = mimeFromBytes(decodeBase64Image(b64));
+				} catch (error) {
+					throw new Error(
+						`Grok Imagine returned a malformed image: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
+				if (
+					mimeType !== "image/png" &&
+					mimeType !== "image/jpeg" &&
+					mimeType !== "image/webp"
+				) {
+					throw new Error(
+						"Grok Imagine returned a malformed response: unsupported image format.",
+					);
+				}
+				return { b64, mimeType };
 			}
 		} catch (error) {
-			if (options.signal?.aborted) throw new Error("Image generation was cancelled.");
+			if (options.signal?.aborted)
+				throw new Error("Image generation was cancelled.");
 			if (error instanceof Error && error.message.startsWith("Grok Imagine")) {
 				throw error;
 			}

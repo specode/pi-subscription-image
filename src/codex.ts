@@ -7,6 +7,7 @@ import {
 import type { InputImage } from "./input-images.ts";
 
 const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
+export const CODEX_IMAGE_BACKEND_MODEL = "gpt-image-2";
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
 const MAX_RETRIES = 3;
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -49,7 +50,7 @@ type CodexSseEvent =
 				result?: string;
 				revised_prompt?: string;
 			};
-		}
+	  }
 	| { type: "response.completed"; response?: { id?: string; usage?: unknown } };
 
 function decodeJwtPayload(token: string): Record<string, unknown> {
@@ -136,7 +137,10 @@ function isRetryableErrorText(errorText: string): boolean {
 	);
 }
 
-function handleCodexEvent(event: CodexSseEvent, parsed: ParsedCodexResponse): void {
+function handleCodexEvent(
+	event: CodexSseEvent,
+	parsed: ParsedCodexResponse,
+): void {
 	switch (event.type) {
 		case "error": {
 			const detail = event.message || event.code || "unknown error";
@@ -181,7 +185,9 @@ function handleCodexEvent(event: CodexSseEvent, parsed: ParsedCodexResponse): vo
 	}
 }
 
-function eventBoundary(buffer: string): { index: number; length: number } | undefined {
+function eventBoundary(
+	buffer: string,
+): { index: number; length: number } | undefined {
 	const lf = buffer.indexOf("\n\n");
 	const crlf = buffer.indexOf("\r\n\r\n");
 	if (lf === -1 && crlf === -1) return undefined;
@@ -205,7 +211,8 @@ export async function parseCodexSse(
 	response: Response,
 	signal?: AbortSignal,
 ): Promise<ParsedCodexResponse> {
-	if (!response.body) throw new Error("Codex response did not include a stream body.");
+	if (!response.body)
+		throw new Error("Codex response did not include a stream body.");
 	const reader = response.body.getReader();
 	const decoder = new TextDecoder();
 	const parsed: ParsedCodexResponse = { text: [] };
@@ -266,7 +273,8 @@ export async function generateCodexImage(options: {
 	const body = JSON.stringify(buildCodexRequestBody(options));
 	const fetchImpl = options.fetchImpl ?? fetch;
 	for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
-		if (options.signal?.aborted) throw new Error("Image generation was cancelled.");
+		if (options.signal?.aborted)
+			throw new Error("Image generation was cancelled.");
 		const request = createRequestSignal(options.signal, REQUEST_TIMEOUT_MS);
 		let retryAfter: string | null = null;
 		try {
@@ -286,7 +294,10 @@ export async function generateCodexImage(options: {
 			});
 			if (!response.ok) {
 				const errorText = await response.text();
-				if (attempt <= MAX_RETRIES && isRetryableStatus(response.status, errorText)) {
+				if (
+					attempt <= MAX_RETRIES &&
+					isRetryableStatus(response.status, errorText)
+				) {
 					retryAfter = response.headers.get("retry-after");
 				} else {
 					throw new CodexResponseError(
@@ -316,7 +327,8 @@ export async function generateCodexImage(options: {
 				};
 			}
 		} catch (error) {
-			if (options.signal?.aborted) throw new Error("Image generation was cancelled.");
+			if (options.signal?.aborted)
+				throw new Error("Image generation was cancelled.");
 			if (error instanceof CodexResponseError) {
 				if (!error.retryable || attempt > MAX_RETRIES) throw error;
 			} else if (request.signal.aborted) {

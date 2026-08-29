@@ -82,3 +82,10 @@ test("strictly validates returned image base64 and MIME", () => {
 	);
 	assert.throws(() => decodeBase64Image("not-base64"), /invalid base64/);
 });
+
+test("validates multi-megabyte base64 images without recursive regex overflow", () => {
+	const largePng = Buffer.alloc(6 * 1024 * 1024);
+	PNG.subarray(0, 8).copy(largePng);
+	const decoded = decodeBase64Image(largePng.toString("base64"), "image/png");
+	assert.equal(decoded.byteLength, largePng.byteLength);
+});

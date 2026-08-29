@@ -4,12 +4,19 @@ import type {
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
-import { generateCodexImage, extractChatGptAccountId } from "./codex.ts";
+import {
+	CODEX_IMAGE_BACKEND_MODEL,
+	generateCodexImage,
+	extractChatGptAccountId,
+} from "./codex.ts";
 import {
 	loadConfig,
 	resolveCodexModel,
+	resolveCodexOutputFormat,
 	resolveDefaultProvider,
 	resolveGrokModel,
+	resolveGrokQuality,
+	resolveGrokResolution,
 	resolveSaveConfig,
 	validateConfig,
 	type SubscriptionImageConfig,
@@ -17,14 +24,19 @@ import {
 import {
 	ASPECT_RATIOS,
 	decodeBase64Image,
+	GROK_QUALITIES,
+	GROK_RESOLUTIONS,
 	normalizeCount,
 	OUTPUT_FORMATS,
+	outputFormatForMimeType,
 	prepareToolArguments,
 	PROVIDERS,
 	resolveProvider,
 	SAVE_MODES,
 	withAspectRatioConstraint,
 	type AspectRatio,
+	type GrokQuality,
+	type GrokResolution,
 	type OutputFormat,
 	type Provider,
 } from "./core.ts";
@@ -60,12 +72,18 @@ const TOOL_PARAMS = Type.Object({
 	outputFormat: Type.Optional(
 		StringEnum(OUTPUT_FORMATS, {
 			description:
-				"Codex output format. Grok Imagine currently returns JPEG and rejects other explicit formats.",
+				"Codex-only output format. Grok Imagine selects the returned image format.",
 		}),
 	),
 	resolution: Type.Optional(
-		StringEnum(["1k"] as const, {
-			description: "Grok Imagine resolution. Currently only 1k is supported.",
+		StringEnum(GROK_RESOLUTIONS, {
+			description: "Grok-only image resolution. Default: 1k.",
+		}),
+	),
+	quality: Type.Optional(
+		StringEnum(GROK_QUALITIES, {
+			description:
+				"Grok Imagine 2.0-only quality level. Omitted by default so the provider decides.",
 		}),
 	),
 	save: Type.Optional(StringEnum(SAVE_MODES)),
@@ -103,6 +121,14 @@ interface GeneratedImage {
 	imageId?: string;
 	revisedPrompt?: string;
 	usage?: unknown;
+}
+
+interface GeneratedBatch {
+	images: GeneratedImage[];
+	model: string;
+	inputImageCount: number;
+	resolution?: GrokResolution;
+	quality?: GrokQuality;
 }
 
 export interface SubscriptionImageDependencies {
@@ -156,15 +182,18 @@ function validateProviderParameters(
 				"Reference-image editing is currently supported only by provider=codex.",
 			);
 		}
-		if (params.outputFormat && params.outputFormat !== "jpeg") {
+		if (params.outputFormat !== undefined) {
 			throw new Error(
-				"Grok Imagine currently returns JPEG. Omit outputFormat or use outputFormat=jpeg.",
+				"outputFormat is supported only by provider=codex; Grok Imagine selects the returned image format.",
 			);
 		}
 		return;
 	}
 	if (params.resolution !== undefined) {
 		throw new Error("resolution is currently supported only by provider=grok.");
+	}
+	if (params.quality !== undefined) {
+		throw new Error("quality is currently supported only by provider=grok.");
 	}
 }
 
@@ -174,11 +203,7 @@ async function generateWithCodex(options: {
 	ctx: ExtensionContext;
 	signal?: AbortSignal;
 	dependencies: SubscriptionImageDependencies;
-}): Promise<{
-	images: GeneratedImage[];
-	model: string;
-	inputImageCount: number;
-}> {
+}): Promise<GeneratedBatch> {
 	const token =
 		await options.ctx.modelRegistry.getApiKeyForProvider("openai-codex");
 	if (!token) {
@@ -194,7 +219,10 @@ async function generateWithCodex(options: {
 		messages: branchMessages(options.ctx),
 	});
 	const model = resolveCodexModel(options.params.model, options.config);
-	const outputFormat = (options.params.outputFormat ?? "png") as OutputFormat;
+	const outputFormat = resolveCodexOutputFormat(
+		options.params.outputFormat as OutputFormat | undefined,
+		options.config,
+	);
 	const count = normalizeCount(options.params.n);
 	const prompt = withAspectRatioConstraint(
 		options.params.prompt,
@@ -226,7 +254,7 @@ async function generateWithGrok(options: {
 	ctx: ExtensionContext;
 	signal?: AbortSignal;
 	dependencies: SubscriptionImageDependencies;
-}): Promise<{ images: GeneratedImage[]; model: string; inputImageCount: 0 }> {
+}): Promise<GeneratedBatch> {
 	const token = await options.ctx.modelRegistry.getApiKeyForProvider("xai");
 	if (!token) {
 		throw new Error(
@@ -234,6 +262,14 @@ async function generateWithGrok(options: {
 		);
 	}
 	const model = resolveGrokModel(options.params.model, options.config);
+	const resolution = resolveGrokResolution(
+		options.params.resolution as GrokResolution | undefined,
+		options.config,
+	);
+	const quality = resolveGrokQuality(
+		options.params.quality as GrokQuality | undefined,
+		options.config,
+	);
 	const count = normalizeCount(options.params.n);
 	const images: GeneratedImage[] = [];
 	for (let index = 0; index < count; index++) {
@@ -242,7 +278,8 @@ async function generateWithGrok(options: {
 			prompt: options.params.prompt.trim(),
 			model,
 			aspectRatio: (options.params.aspectRatio ?? "1:1") as AspectRatio,
-			resolution: options.params.resolution,
+			resolution,
+			quality,
 			signal: options.signal,
 		});
 		images.push({
@@ -250,7 +287,7 @@ async function generateWithGrok(options: {
 			bytes: decodeBase64Image(result.b64, result.mimeType),
 		});
 	}
-	return { images, model, inputImageCount: 0 };
+	return { images, model, inputImageCount: 0, resolution, quality };
 }
 
 export function registerSubscriptionImage(
@@ -324,6 +361,11 @@ export function registerSubscriptionImage(
 				}
 			}
 
+			const outputFormats = [
+				...new Set(
+					generated.images.map((image) => outputFormatForMimeType(image.mimeType)),
+				),
+			];
 			const content: Array<
 				| { type: "text"; text: string }
 				| { type: "image"; data: string; mimeType: string }
@@ -332,7 +374,12 @@ export function registerSubscriptionImage(
 					type: "text",
 					text: [
 						`Generated ${generated.images.length} image(s) via ${provider}/${generated.model} using subscription account quota.`,
-						provider === "codex" ? "Backend image model: gpt-image-2." : undefined,
+						provider === "codex"
+							? `Backend image model: ${CODEX_IMAGE_BACKEND_MODEL}.`
+							: undefined,
+						generated.resolution ? `Resolution: ${generated.resolution}.` : undefined,
+						generated.quality ? `Quality: ${generated.quality}.` : undefined,
+						`Output format${outputFormats.length === 1 ? "" : "s"}: ${outputFormats.join(", ")}.`,
 						savedPaths.length ? `Saved: ${savedPaths.join(", ")}.` : undefined,
 						saveWarnings.length
 							? `Save warnings: ${saveWarnings.join("; ")}.`
@@ -351,17 +398,25 @@ export function registerSubscriptionImage(
 				details: {
 					provider,
 					model: generated.model,
-					backendImageModel: provider === "codex" ? "gpt-image-2" : generated.model,
+					routingModel: provider === "codex" ? generated.model : undefined,
+					imageModel: provider === "grok" ? generated.model : undefined,
+					backendImageModel:
+						provider === "codex" ? CODEX_IMAGE_BACKEND_MODEL : generated.model,
 					requestedCount: count,
 					generatedCount: generated.images.length,
-					aspectRatio: params.aspectRatio,
-					outputFormat:
-						provider === "codex" ? (params.outputFormat ?? "png") : "jpeg",
+					aspectRatio:
+						provider === "grok" ? (params.aspectRatio ?? "1:1") : params.aspectRatio,
+					resolution: generated.resolution,
+					quality: generated.quality,
+					outputFormat: outputFormats.length === 1 ? outputFormats[0] : undefined,
+					outputFormats,
 					inputImageCount: generated.inputImageCount,
 					saveMode: saveConfig.mode,
 					savedPaths,
 					saveWarnings,
 					items: generated.images.map((image) => ({
+						mimeType: image.mimeType,
+						byteSize: image.bytes.byteLength,
 						status: image.status,
 						responseId: image.responseId,
 						imageId: image.imageId,

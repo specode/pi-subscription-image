@@ -17,10 +17,15 @@ function jwt() {
 
 function setup(
 	provider: "openai-codex" | "xai",
-	options: { save?: "none" | "project"; saveFailure?: string } = {},
+	options: {
+		save?: "none" | "project";
+		saveFailure?: string;
+		config?: Record<string, unknown>;
+	} = {},
 ) {
 	let tool: any;
 	const calls: string[] = [];
+	const requests: { codex?: any; grok?: any } = {};
 	const pi = {
 		registerTool(value: unknown) {
 			tool = value;
@@ -29,13 +34,14 @@ function setup(
 		sendUserMessage() {},
 	};
 	registerSubscriptionImage(pi as any, {
-		loadConfig: () => ({ save: options.save ?? "none" }),
+		loadConfig: () => ({ save: options.save ?? "none", ...options.config }),
 		saveGeneratedImage: async () => {
 			if (options.saveFailure) throw new Error(options.saveFailure);
 			return "/unused";
 		},
-		generateCodexImage: async () => {
+		generateCodexImage: async (request) => {
 			calls.push("codex");
+			requests.codex = request;
 			return {
 				b64: PNG_B64,
 				mimeType: "image/png",
@@ -43,8 +49,9 @@ function setup(
 				status: "completed",
 			};
 		},
-		generateGrokImage: async () => {
+		generateGrokImage: async (request) => {
 			calls.push("grok");
+			requests.grok = request;
 			return { b64: JPEG_B64, mimeType: "image/jpeg" };
 		},
 	});
@@ -63,7 +70,7 @@ function setup(
 		hasUI: false,
 		ui: { notify() {} },
 	};
-	return { tool, calls, ctx };
+	return { tool, calls, requests, ctx };
 }
 
 test("registers the generate_image tool", () => {
@@ -74,8 +81,8 @@ test("registers the generate_image tool", () => {
 	assert.equal(tool.executionMode, "parallel");
 });
 
-test("routes an openai-codex session to Codex", async () => {
-	const { tool, calls, ctx } = setup("openai-codex");
+test("routes an openai-codex session to the latest Codex routing model", async () => {
+	const { tool, calls, requests, ctx } = setup("openai-codex");
 	const result = await tool.execute(
 		"call-1",
 		{ prompt: "cat", save: "none" },
@@ -84,22 +91,40 @@ test("routes an openai-codex session to Codex", async () => {
 		ctx,
 	);
 	assert.deepEqual(calls, ["codex"]);
+	assert.equal(requests.codex.model, "gpt-5.6-sol");
+	assert.equal(requests.codex.outputFormat, "png");
 	assert.equal(result.details.provider, "codex");
+	assert.equal(result.details.routingModel, "gpt-5.6-sol");
+	assert.equal(result.details.backendImageModel, "gpt-image-2");
 	assert.equal(result.content[1].type, "image");
 	assert.equal(result.content[1].mimeType, "image/png");
 });
 
-test("routes an xai session to Grok", async () => {
-	const { tool, calls, ctx } = setup("xai");
+test("routes an xai session to Grok Imagine 2.0 with explicit native options", async () => {
+	const { tool, calls, requests, ctx } = setup("xai");
 	const result = await tool.execute(
 		"call-1",
-		{ prompt: "cat", save: "none" },
+		{
+			prompt: "cat",
+			resolution: "2k",
+			quality: "medium",
+			save: "none",
+		},
 		undefined,
 		undefined,
 		ctx,
 	);
 	assert.deepEqual(calls, ["grok"]);
+	assert.equal(requests.grok.model, "grok-imagine-image-2.0");
+	assert.equal(requests.grok.resolution, "2k");
+	assert.equal(requests.grok.quality, "medium");
 	assert.equal(result.details.provider, "grok");
+	assert.equal(result.details.imageModel, "grok-imagine-image-2.0");
+	assert.equal(result.details.resolution, "2k");
+	assert.equal(result.details.quality, "medium");
+	assert.equal(result.details.outputFormat, "jpeg");
+	assert.equal(result.details.items[0].byteSize, 4);
+	assert.match(result.content[0].text, /Output format: jpeg/);
 	assert.equal(result.content[1].mimeType, "image/jpeg");
 });
 
@@ -130,6 +155,34 @@ test("returns inline images when optional disk persistence fails", async () => {
 	assert.deepEqual(result.details.savedPaths, []);
 	assert.deepEqual(result.details.saveWarnings, ["disk full"]);
 	assert.match(result.content[0].text, /Save warnings: disk full/);
+});
+
+test("rejects provider-specific parameters before execution", async () => {
+	const codex = setup("openai-codex");
+	await assert.rejects(
+		codex.tool.execute(
+			"call-1",
+			{ prompt: "cat", provider: "codex", quality: "medium" },
+			undefined,
+			undefined,
+			codex.ctx,
+		),
+		/quality is currently supported only by provider=grok/,
+	);
+	assert.deepEqual(codex.calls, []);
+
+	const grok = setup("xai");
+	await assert.rejects(
+		grok.tool.execute(
+			"call-1",
+			{ prompt: "cat", provider: "grok", outputFormat: "jpeg" },
+			undefined,
+			undefined,
+			grok.ctx,
+		),
+		/outputFormat is supported only by provider=codex/,
+	);
+	assert.deepEqual(grok.calls, []);
 });
 
 test("rejects Grok reference-image editing before provider execution", async () => {

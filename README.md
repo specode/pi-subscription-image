@@ -29,9 +29,11 @@ Image extensions often expose provider-specific tools with different parameters 
 | Authentication | Pi `openai-codex` OAuth | Pi `xai` subscription login |
 | Text-to-image | Yes | Yes |
 | Reference-image editing | Yes, up to five inputs | Not currently exposed |
-| Output | PNG, JPEG, WebP | JPEG |
+| Output | PNG, JPEG, WebP | Provider-selected and detected from returned bytes |
 | Aspect ratio | Prompt constraint | Native request parameter |
-| Default model | `gpt-5.5` routing to backend `gpt-image-2` | `grok-imagine-image-quality` |
+| Resolution | Backend-selected | `1k` or `2k`; default `1k` |
+| Quality level | Not currently exposed | `low` or `medium`; Imagine 2.0 only |
+| Default model | `gpt-5.6-sol` routing to the currently known `gpt-image-2` backend | `grok-imagine-image-2.0` |
 
 ## Installation
 
@@ -89,8 +91,9 @@ The model calls `generate_image`. The public parameters are:
 | `model` | Codex routing model or Grok Imagine image model |
 | `aspectRatio` | Common aspect-ratio constraint |
 | `n` | One to four sequential images |
-| `outputFormat` | Codex: `png`, `jpeg`, or `webp`; Grok: `jpeg` only |
-| `resolution` | Grok: `1k` |
+| `outputFormat` | Codex only: `png`, `jpeg`, or `webp`; Grok selects the actual format |
+| `resolution` | Grok only: `1k` or `2k`; default `1k` |
+| `quality` | Grok Imagine 2.0 only: `low` or `medium`; omitted by default |
 | `save` | `none`, `project`, `global`, or `custom` |
 | `saveDir` | Directory for `save=custom` |
 | `referencedImagePaths` | Codex: up to five local images |
@@ -144,10 +147,22 @@ Project values override global values only when project trust is active.
   "defaultProvider": "codex",
   "save": "global",
   "saveDir": "~/Pictures/generated",
-  "codexRoutingModel": "gpt-5.5",
-  "grokImageModel": "grok-imagine-image-quality"
+  "providers": {
+    "codex": {
+      "routingModel": "gpt-5.6-sol",
+      "outputFormat": "png"
+    },
+    "grok": {
+      "imageModel": "grok-imagine-image-2.0",
+      "resolution": "1k"
+    }
+  }
 }
 ```
+
+Set `providers.grok.quality` to `low` or `medium` when needed. When omitted, the extension does not send the field to xAI. The legacy `codexRoutingModel` and `grokImageModel` keys remain supported. Global and trusted-project `providers.codex` and `providers.grok` blocks are deep-merged independently.
+
+The truly common parameters are `prompt`, `provider`, the per-call `model` override, `aspectRatio`, `n`, `save`, and `saveDir`. Provider-specific capabilities remain explicit: Codex owns `outputFormat` and reference-image inputs; Grok owns `resolution` and `quality`. The extension does not silently rewrite or embellish prompts; only Codex receives a deterministic aspect-ratio constraint appended to the prompt.
 
 Environment overrides:
 
@@ -155,7 +170,10 @@ Environment overrides:
 - `PI_SUBSCRIPTION_IMAGE_SAVE_MODE`
 - `PI_SUBSCRIPTION_IMAGE_SAVE_DIR`
 - `PI_SUBSCRIPTION_IMAGE_CODEX_MODEL`
+- `PI_SUBSCRIPTION_IMAGE_CODEX_OUTPUT_FORMAT`
 - `PI_SUBSCRIPTION_IMAGE_GROK_MODEL`
+- `PI_SUBSCRIPTION_IMAGE_GROK_RESOLUTION`
+- `PI_SUBSCRIPTION_IMAGE_GROK_QUALITY`
 - `PI_SUBSCRIPTION_IMAGE_GROK_BASE_URL`
 
 `PI_IMAGE_SAVE_MODE` and `PI_IMAGE_SAVE_DIR` are also accepted.

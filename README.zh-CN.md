@@ -29,9 +29,11 @@
 | 认证 | Pi `openai-codex` OAuth | Pi `xai` 订阅登录 |
 | 文生图 | 支持 | 支持 |
 | 参考图编辑 | 支持，最多 5 张 | 当前未开放 |
-| 输出格式 | PNG、JPEG、WebP | JPEG |
+| 输出格式 | PNG、JPEG、WebP | Provider 决定，按返回字节检测 |
 | 图片比例 | 写入 Prompt 约束 | 原生请求参数 |
-| 默认模型 | `gpt-5.5` 路由，后端 `gpt-image-2` | `grok-imagine-image-quality` |
+| 分辨率 | 后端决定 | `1k`、`2k`，默认 `1k` |
+| 质量等级 | 当前未开放 | `low`、`medium`，仅 Imagine 2.0 |
+| 默认模型 | `gpt-5.6-sol` 路由，当前已知后端 `gpt-image-2` | `grok-imagine-image-2.0` |
 
 ## 安装
 
@@ -89,8 +91,9 @@ pi --no-extensions --offline -e /path/to/pi-subscription-image
 | `model` | Codex 路由模型或 Grok Imagine 图片模型 |
 | `aspectRatio` | 通用图片比例约束 |
 | `n` | 顺序生成 1–4 张 |
-| `outputFormat` | Codex 支持 `png`、`jpeg`、`webp`；Grok 仅支持 `jpeg` |
-| `resolution` | Grok 当前支持 `1k` |
+| `outputFormat` | 仅 Codex：`png`、`jpeg`、`webp`；Grok 的实际格式由 Provider 决定 |
+| `resolution` | 仅 Grok：`1k` 或 `2k`，默认 `1k` |
+| `quality` | 仅 Grok Imagine 2.0：`low` 或 `medium`；默认不发送，由 Provider 决定 |
 | `save` | `none`、`project`、`global` 或 `custom` |
 | `saveDir` | `save=custom` 时的目录 |
 | `referencedImagePaths` | Codex 最多 5 张本地参考图 |
@@ -144,10 +147,22 @@ pi --no-extensions --offline -e /path/to/pi-subscription-image
   "defaultProvider": "codex",
   "save": "global",
   "saveDir": "~/Pictures/generated",
-  "codexRoutingModel": "gpt-5.5",
-  "grokImageModel": "grok-imagine-image-quality"
+  "providers": {
+    "codex": {
+      "routingModel": "gpt-5.6-sol",
+      "outputFormat": "png"
+    },
+    "grok": {
+      "imageModel": "grok-imagine-image-2.0",
+      "resolution": "1k"
+    }
+  }
 }
 ```
+
+`providers.grok.quality` 可设为 `low` 或 `medium`；省略时不向 xAI 发送该字段。旧的 `codexRoutingModel` 和 `grokImageModel` 配置仍兼容。全局与可信项目的 `providers.codex`、`providers.grok` 会分别深度合并。
+
+真正统一的参数是 `prompt`、`provider`、`model` 覆盖入口、`aspectRatio`、`n`、`save` 和 `saveDir`。Provider 特有参数保持显式：Codex 使用 `outputFormat` 和参考图输入；Grok 使用 `resolution`、`quality`。扩展不会默认改写或润色 Prompt；只有 Codex 的比例要求会以确定性约束追加到 Prompt。
 
 环境变量：
 
@@ -155,7 +170,10 @@ pi --no-extensions --offline -e /path/to/pi-subscription-image
 - `PI_SUBSCRIPTION_IMAGE_SAVE_MODE`
 - `PI_SUBSCRIPTION_IMAGE_SAVE_DIR`
 - `PI_SUBSCRIPTION_IMAGE_CODEX_MODEL`
+- `PI_SUBSCRIPTION_IMAGE_CODEX_OUTPUT_FORMAT`
 - `PI_SUBSCRIPTION_IMAGE_GROK_MODEL`
+- `PI_SUBSCRIPTION_IMAGE_GROK_RESOLUTION`
+- `PI_SUBSCRIPTION_IMAGE_GROK_QUALITY`
 - `PI_SUBSCRIPTION_IMAGE_GROK_BASE_URL`
 
 同时支持 `PI_IMAGE_SAVE_MODE` 和 `PI_IMAGE_SAVE_DIR`。
