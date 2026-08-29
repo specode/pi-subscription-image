@@ -1,0 +1,190 @@
+# pi-subscription-image
+
+[简体中文](./README.zh-CN.md)
+
+A [Pi](https://github.com/earendil-works/pi-mono) extension that exposes one `generate_image` tool backed by existing OpenAI Codex and xAI Grok subscription logins.
+
+## Why
+
+Image extensions often expose provider-specific tools with different parameters and save behavior. This package keeps one stable tool contract, routes by the active Pi session provider, and returns every generated image inline.
+
+## Features
+
+- Reuses Pi's `openai-codex` OAuth login for Codex image generation.
+- Reuses Pi's `xai` subscription login for Grok Imagine.
+- Keeps the replacement tool name `generate_image` and `/img` command.
+- Automatically routes `openai-codex/*` sessions to Codex and `xai/*` sessions to Grok.
+- Lets callers explicitly select `provider=codex` or `provider=grok` from other sessions.
+- Supports up to four sequential generations per call.
+- Supports Codex reference-image editing with up to five PNG, JPEG, or WebP inputs.
+- Preserves `none`, `project`, `global`, and `custom` save modes.
+- Returns valid images inline even when optional disk persistence fails.
+- Includes strict base64, MIME, timeout, retry, and response validation.
+- Does not store credentials or send telemetry.
+
+## Provider capabilities
+
+| Capability | Codex | Grok |
+| --- | --- | --- |
+| Authentication | Pi `openai-codex` OAuth | Pi `xai` subscription login |
+| Text-to-image | Yes | Yes |
+| Reference-image editing | Yes, up to five inputs | Not currently exposed |
+| Output | PNG, JPEG, WebP | JPEG |
+| Aspect ratio | Prompt constraint | Native request parameter |
+| Default model | `gpt-5.5` routing to backend `gpt-image-2` | `grok-imagine-image-quality` |
+
+## Installation
+
+Install from npm after the first release:
+
+```bash
+pi install npm:@specode/pi-subscription-image
+```
+
+Try a local checkout without installing:
+
+```bash
+pi --no-extensions --offline -e /path/to/pi-subscription-image
+```
+
+Restart Pi or run `/reload` after installation.
+
+## Authentication
+
+Use Pi's normal login flow:
+
+```text
+/login
+```
+
+- Select **ChatGPT Plus/Pro (Codex)** for Codex.
+- Select the **xAI** subscription login for X Premium or SuperGrok.
+
+Check readiness without exposing credentials:
+
+```text
+/subscription-image status
+```
+
+## Usage
+
+Natural language:
+
+```text
+Generate a cinematic 16:9 image of a lunar research station at sunrise.
+```
+
+Direct command:
+
+```text
+/img a flat vector icon of a red panda
+```
+
+The model calls `generate_image`. The public parameters are:
+
+| Parameter | Description |
+| --- | --- |
+| `prompt` | Required image prompt or edit instruction |
+| `provider` | `auto`, `codex`, or `grok` |
+| `model` | Codex routing model or Grok Imagine image model |
+| `aspectRatio` | Common aspect-ratio constraint |
+| `n` | One to four sequential images |
+| `outputFormat` | Codex: `png`, `jpeg`, or `webp`; Grok: `jpeg` only |
+| `resolution` | Grok: `1k` |
+| `save` | `none`, `project`, `global`, or `custom` |
+| `saveDir` | Directory for `save=custom` |
+| `referencedImagePaths` | Codex: up to five local images |
+| `numLastImagesToInclude` | Codex: recent conversation images to edit |
+
+Legacy explicit provider values remain compatible:
+
+- `provider=openai` maps to `codex`.
+- `provider=xai` maps to `grok`.
+- Legacy `aspect_ratio` maps to `aspectRatio` before validation.
+
+## Routing
+
+With `provider=auto` or no provider:
+
+1. Reference-image inputs select Codex.
+2. An `openai-codex/*` session selects Codex.
+3. An `xai/*` session selects Grok.
+4. `defaultProvider` is used when configured.
+5. Otherwise the tool asks for an explicit provider instead of spending quota unexpectedly.
+
+## Save behavior
+
+| Mode | Location |
+| --- | --- |
+| `none` | Inline result only |
+| `project` | `<cwd>/.pi/generated-images/` |
+| `global` | `~/.pi/agent/generated-images/` |
+| `custom` | `saveDir` or configured directory |
+
+The default is `global`, matching the extension this package replaces.
+
+## Configuration
+
+Global configuration:
+
+```text
+~/.pi/agent/extensions/subscription-image.json
+```
+
+Trusted project configuration:
+
+```text
+<project>/.pi/extensions/subscription-image.json
+```
+
+Project values override global values only when project trust is active.
+
+```json
+{
+  "defaultProvider": "codex",
+  "save": "global",
+  "saveDir": "~/Pictures/generated",
+  "codexRoutingModel": "gpt-5.5",
+  "grokImageModel": "grok-imagine-image-quality"
+}
+```
+
+Environment overrides:
+
+- `PI_SUBSCRIPTION_IMAGE_PROVIDER`
+- `PI_SUBSCRIPTION_IMAGE_SAVE_MODE`
+- `PI_SUBSCRIPTION_IMAGE_SAVE_DIR`
+- `PI_SUBSCRIPTION_IMAGE_CODEX_MODEL`
+- `PI_SUBSCRIPTION_IMAGE_GROK_MODEL`
+- `PI_SUBSCRIPTION_IMAGE_GROK_BASE_URL`
+
+Legacy `PI_IMAGE_SAVE_MODE` and `PI_IMAGE_SAVE_DIR` remain accepted.
+
+## Security and service boundaries
+
+- This is an unofficial community extension.
+- It reads resolved credentials through Pi's provider registry and never writes them to package-owned storage.
+- Prompts and reference images are sent to the selected provider.
+- Codex generation uses the ChatGPT Codex Responses backend and its built-in `image_generation` tool.
+- Grok generation uses the xAI image generation endpoint.
+- Subscription availability, quotas, regional access, and provider terms still apply.
+- Backend changes can require a package update.
+
+## Migration from a previous `generate_image` extension
+
+Only one extension should register `generate_image`. Disable or remove the previous implementation before enabling this package. The existing prompt, provider alias, aspect-ratio, count, and save parameters remain compatible.
+
+## Development
+
+```bash
+npm install
+npm test
+npm run smoke
+npm run check
+```
+
+Pushes to `main` and pull requests run type checking, tests, Pi loading, and package validation. The npm release workflow follows OIDC Trusted Publishing: creating a GitHub release repeats those checks and then publishes without a long-lived npm token.
+
+## License
+
+[MIT](./LICENSE). See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) for implementation references and attribution.

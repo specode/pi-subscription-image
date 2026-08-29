@@ -1,0 +1,58 @@
+{
+  "name": "@specode/pi-subscription-image",
+  "version": "0.1.0",
+  "description": "Generate images in Pi with existing Codex and Grok subscriptions.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Specode",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/specode/pi-subscription-image.git"
+  },
+  "homepage": "https://github.com/specode/pi-subscription-image#readme",
+  "bugs": {
+    "url": "https://github.com/specode/pi-subscription-image/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-coding-agent",
+    "image-generation",
+    "codex",
+    "grok",
+    "subscription"
+  ],
+  "files": [
+    "src",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE",
+    "LICENSES",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "smoke": "pi --no-extensions --offline -e . --list-models",
+    "check": "npm run typecheck && npm test && npm run smoke && npm pack --dry-run"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "typescript": "^6.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

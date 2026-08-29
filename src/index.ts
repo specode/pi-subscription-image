@@ -1,0 +1,404 @@
+import { StringEnum } from "@earendil-works/pi-ai";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
+import { type Static, Type } from "typebox";
+import { generateCodexImage, extractChatGptAccountId } from "./codex.ts";
+import {
+	loadConfig,
+	resolveCodexModel,
+	resolveDefaultProvider,
+	resolveGrokModel,
+	resolveSaveConfig,
+	validateConfig,
+	type SubscriptionImageConfig,
+} from "./config.ts";
+import {
+	ASPECT_RATIOS,
+	decodeBase64Image,
+	normalizeCount,
+	OUTPUT_FORMATS,
+	prepareToolArguments,
+	PROVIDERS,
+	resolveProvider,
+	SAVE_MODES,
+	withAspectRatioConstraint,
+	type AspectRatio,
+	type OutputFormat,
+	type Provider,
+} from "./core.ts";
+import { generateGrokImage } from "./grok.ts";
+import { MAX_EDIT_IMAGES, resolveInputImages } from "./input-images.ts";
+import { saveGeneratedImage } from "./save.ts";
+
+const TOOL_PARAMS = Type.Object({
+	prompt: Type.String({
+		description:
+			"Image description or edit instruction. Be specific about subject, composition, style, text, and constraints.",
+	}),
+	provider: Type.Optional(
+		StringEnum(PROVIDERS, {
+			description:
+			"Subscription backend. auto follows openai-codex/xai session providers; reference-image edits select codex.",
+		}),
+	),
+	model: Type.Optional(
+		Type.String({
+			description:
+			"Provider-specific override: Codex routing model or Grok Imagine image model.",
+		}),
+	),
+	aspectRatio: Type.Optional(StringEnum(ASPECT_RATIOS)),
+	n: Type.Optional(
+		Type.Integer({
+			description: "Number of images to generate sequentially (1-4). Default: 1.",
+			minimum: 1,
+			maximum: 4,
+		}),
+	),
+	outputFormat: Type.Optional(
+		StringEnum(OUTPUT_FORMATS, {
+			description:
+			"Codex output format. Grok Imagine currently returns JPEG and rejects other explicit formats.",
+		}),
+	),
+	resolution: Type.Optional(
+		StringEnum(["1k"] as const, {
+			description: "Grok Imagine resolution. Currently only 1k is supported.",
+		}),
+	),
+	save: Type.Optional(StringEnum(SAVE_MODES)),
+	saveDir: Type.Optional(
+		Type.String({
+			description:
+			"Directory when save=custom. Relative paths resolve under the current workspace.",
+		}),
+	),
+	referencedImagePaths: Type.Optional(
+		Type.Array(Type.String(), {
+			maxItems: MAX_EDIT_IMAGES,
+			description:
+			"Codex only: up to five local PNG, JPEG, or WebP images to edit.",
+		}),
+	),
+	numLastImagesToInclude: Type.Optional(
+		Type.Integer({
+			minimum: 1,
+			maximum: MAX_EDIT_IMAGES,
+			description:
+			"Codex only: include the most recent one to five conversation images for editing.",
+		}),
+	),
+});
+
+type ToolParams = Static<typeof TOOL_PARAMS>;
+
+interface GeneratedImage {
+	b64: string;
+	bytes: Buffer;
+	mimeType: string;
+	status?: string;
+	responseId?: string;
+	imageId?: string;
+	revisedPrompt?: string;
+	usage?: unknown;
+}
+
+export interface SubscriptionImageDependencies {
+	generateCodexImage: typeof generateCodexImage;
+	generateGrokImage: typeof generateGrokImage;
+	saveGeneratedImage: typeof saveGeneratedImage;
+	loadConfig: typeof loadConfig;
+}
+
+const DEFAULT_DEPENDENCIES: SubscriptionImageDependencies = {
+	generateCodexImage,
+	generateGrokImage,
+	saveGeneratedImage,
+	loadConfig,
+};
+
+function branchMessages(ctx: ExtensionContext): unknown[] {
+	const messages: unknown[] = [];
+	for (const entry of ctx.sessionManager.getBranch()) {
+		if (entry.type === "message") messages.push(entry.message);
+		if (entry.type === "custom_message") messages.push(entry);
+	}
+	return messages;
+}
+
+async function credentialAvailable(
+	ctx: ExtensionContext,
+	provider: "openai-codex" | "xai",
+): Promise<boolean> {
+	try {
+		return Boolean(await ctx.modelRegistry.getApiKeyForProvider(provider));
+	} catch {
+		return false;
+	}
+}
+
+function hasReferenceInputs(params: ToolParams): boolean {
+	return Boolean(
+		params.referencedImagePaths?.length ||
+			params.numLastImagesToInclude !== undefined,
+	);
+}
+
+function validateProviderParameters(provider: Provider, params: ToolParams): void {
+	if (provider === "grok") {
+		if (hasReferenceInputs(params)) {
+			throw new Error(
+				"Reference-image editing is currently supported only by provider=codex.",
+			);
+		}
+		if (params.outputFormat && params.outputFormat !== "jpeg") {
+			throw new Error(
+				"Grok Imagine currently returns JPEG. Omit outputFormat or use outputFormat=jpeg.",
+			);
+		}
+		return;
+	}
+	if (params.resolution !== undefined) {
+		throw new Error("resolution is currently supported only by provider=grok.");
+	}
+}
+
+async function generateWithCodex(options: {
+	params: ToolParams;
+	config: SubscriptionImageConfig;
+	ctx: ExtensionContext;
+	signal?: AbortSignal;
+	dependencies: SubscriptionImageDependencies;
+}): Promise<{ images: GeneratedImage[]; model: string; inputImageCount: number }> {
+	const token = await options.ctx.modelRegistry.getApiKeyForProvider("openai-codex");
+	if (!token) {
+		throw new Error(
+			"Missing openai-codex credentials. Run /login and select ChatGPT Plus/Pro (Codex).",
+		);
+	}
+	const accountId = extractChatGptAccountId(token);
+	const inputImages = await resolveInputImages({
+		referencedImagePaths: options.params.referencedImagePaths,
+		numLastImagesToInclude: options.params.numLastImagesToInclude,
+		cwd: options.ctx.cwd,
+		messages: branchMessages(options.ctx),
+	});
+	const model = resolveCodexModel(options.params.model, options.config);
+	const outputFormat = (options.params.outputFormat ?? "png") as OutputFormat;
+	const count = normalizeCount(options.params.n);
+	const prompt = withAspectRatioConstraint(
+		options.params.prompt,
+		options.params.aspectRatio as AspectRatio | undefined,
+	);
+	const images: GeneratedImage[] = [];
+	for (let index = 0; index < count; index++) {
+		const result = await options.dependencies.generateCodexImage({
+			token,
+			accountId,
+			prompt,
+			model,
+			outputFormat,
+			sessionId: options.ctx.sessionManager.getSessionId(),
+			inputImages,
+			signal: options.signal,
+		});
+		images.push({
+			...result,
+			bytes: decodeBase64Image(result.b64, result.mimeType),
+		});
+	}
+	return { images, model, inputImageCount: inputImages.length };
+}
+
+async function generateWithGrok(options: {
+	params: ToolParams;
+	config: SubscriptionImageConfig;
+	ctx: ExtensionContext;
+	signal?: AbortSignal;
+	dependencies: SubscriptionImageDependencies;
+}): Promise<{ images: GeneratedImage[]; model: string; inputImageCount: 0 }> {
+	const token = await options.ctx.modelRegistry.getApiKeyForProvider("xai");
+	if (!token) {
+		throw new Error(
+			"Missing xAI credentials. Run /login xai and choose your X Premium or SuperGrok subscription.",
+		);
+	}
+	const model = resolveGrokModel(options.params.model, options.config);
+	const count = normalizeCount(options.params.n);
+	const images: GeneratedImage[] = [];
+	for (let index = 0; index < count; index++) {
+		const result = await options.dependencies.generateGrokImage({
+			token,
+			prompt: options.params.prompt.trim(),
+			model,
+			aspectRatio: (options.params.aspectRatio ?? "1:1") as AspectRatio,
+			resolution: options.params.resolution,
+			signal: options.signal,
+		});
+		images.push({
+			...result,
+			bytes: decodeBase64Image(result.b64, result.mimeType),
+		});
+	}
+	return { images, model, inputImageCount: 0 };
+}
+
+export function registerSubscriptionImage(
+	pi: ExtensionAPI,
+	dependencies: SubscriptionImageDependencies = DEFAULT_DEPENDENCIES,
+): void {
+	pi.registerTool({
+		name: "generate_image",
+		label: "订阅生图",
+		description:
+			"Generate or edit raster images using existing OpenAI Codex or xAI Grok subscription credentials. The backend follows the active openai-codex/xai session unless provider is explicit. Codex supports reference-image editing; Grok supports text-to-image only.",
+		promptSnippet: "Generate or edit images through Codex or Grok subscriptions",
+		promptGuidelines: [
+			"Use generate_image when the user asks to generate, draw, edit, or create a raster image.",
+			"Do not call generate_image without a clear image request because it consumes subscription quota.",
+			"Let generate_image follow the current openai-codex/xai session provider unless the user explicitly requests Codex or Grok.",
+			"Use provider=codex when reference-image editing is requested.",
+		],
+		parameters: TOOL_PARAMS,
+		prepareArguments: (args) => prepareToolArguments(args) as ToolParams,
+		executionMode: "parallel",
+		async execute(_toolCallId, params: ToolParams, signal, onUpdate, ctx) {
+			const prompt = params.prompt.trim();
+			if (!prompt) throw new Error("prompt is required.");
+
+			const projectTrusted =
+				typeof ctx.isProjectTrusted === "function" && ctx.isProjectTrusted();
+			const config = dependencies.loadConfig(ctx.cwd, projectTrusted);
+			for (const warning of validateConfig(config)) {
+				if (ctx.hasUI) ctx.ui.notify(`[subscription-image] ${warning}`, "warning");
+			}
+			const provider = resolveProvider({
+				requested: params.provider,
+				sessionProvider: ctx.model?.provider,
+				defaultProvider: resolveDefaultProvider(config),
+				requiresCodex: hasReferenceInputs(params),
+			});
+			validateProviderParameters(provider, params);
+			const count = normalizeCount(params.n);
+
+			onUpdate?.({
+				content: [
+					{
+						type: "text",
+						text: `Requesting ${count} image(s) from ${provider} subscription...`,
+					},
+				],
+				details: { provider, count },
+			});
+
+			const generated =
+				provider === "codex"
+					? await generateWithCodex({ params, config, ctx, signal, dependencies })
+					: await generateWithGrok({ params, config, ctx, signal, dependencies });
+			const saveConfig = resolveSaveConfig(params, ctx.cwd, config);
+			const savedPaths: string[] = [];
+			const saveWarnings: string[] = [];
+			for (const image of generated.images) {
+				if (saveConfig.mode === "none" || !saveConfig.outputDir) continue;
+				try {
+					const path = await dependencies.saveGeneratedImage({
+						bytes: image.bytes,
+						mimeType: image.mimeType,
+						outputDir: saveConfig.outputDir,
+						prompt,
+					});
+					savedPaths.push(path);
+				} catch (error) {
+					saveWarnings.push(
+						error instanceof Error ? error.message : String(error),
+					);
+				}
+			}
+
+			const content: Array<
+				| { type: "text"; text: string }
+				| { type: "image"; data: string; mimeType: string }
+			> = [
+				{
+					type: "text",
+					text: [
+						`Generated ${generated.images.length} image(s) via ${provider}/${generated.model}.`,
+						provider === "codex" ? "Backend image model: gpt-image-2." : undefined,
+						savedPaths.length ? `Saved: ${savedPaths.join(", ")}.` : undefined,
+						saveWarnings.length
+							? `Save warnings: ${saveWarnings.join("; ")}.`
+							: undefined,
+					]
+						.filter(Boolean)
+						.join(" "),
+				},
+			];
+			for (const image of generated.images) {
+				content.push({ type: "image", data: image.b64, mimeType: image.mimeType });
+			}
+
+			return {
+				content,
+				details: {
+					provider,
+					model: generated.model,
+					backendImageModel: provider === "codex" ? "gpt-image-2" : generated.model,
+					requestedCount: count,
+					generatedCount: generated.images.length,
+					aspectRatio: params.aspectRatio,
+					outputFormat:
+						provider === "codex" ? params.outputFormat ?? "png" : "jpeg",
+					inputImageCount: generated.inputImageCount,
+					saveMode: saveConfig.mode,
+					savedPaths,
+					saveWarnings,
+					items: generated.images.map((image) => ({
+						status: image.status,
+						responseId: image.responseId,
+						imageId: image.imageId,
+						revisedPrompt: image.revisedPrompt,
+						usage: image.usage,
+					})),
+				},
+			};
+		},
+	});
+
+	pi.registerCommand("img", {
+		description: "Generate an image through Codex or Grok subscription",
+		handler: async (args, ctx) => {
+			const prompt = args.trim();
+			if (!prompt) {
+				ctx.ui.notify("Usage: /img <prompt>", "error");
+				return;
+			}
+			await pi.sendUserMessage(
+				`Use generate_image to create an image with this prompt: ${prompt}`,
+			);
+		},
+	});
+
+	pi.registerCommand("subscription-image", {
+		description: "Show Codex and Grok subscription-image readiness",
+		handler: async (args, ctx) => {
+			if (args.trim() && args.trim().toLowerCase() !== "status") {
+				ctx.ui.notify("Usage: /subscription-image [status]", "error");
+				return;
+			}
+			const [codexReady, grokReady] = await Promise.all([
+				credentialAvailable(ctx, "openai-codex"),
+				credentialAvailable(ctx, "xai"),
+			]);
+			ctx.ui.notify(
+				`订阅生图：Codex ${codexReady ? "ready" : "login required"}；Grok ${grokReady ? "ready" : "login required"}`,
+				codexReady || grokReady ? "info" : "warning",
+			);
+		},
+	});
+}
+
+export default function subscriptionImage(pi: ExtensionAPI): void {
+	registerSubscriptionImage(pi);
+}
