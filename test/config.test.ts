@@ -17,18 +17,24 @@ test("resolves provider-specific model defaults and overrides", () => {
 	assert.equal(resolveGrokModel("grok-fast", {}), "grok-fast");
 });
 
-test("preserves legacy save locations", () => {
+test("resolves configured save locations", () => {
 	assert.deepEqual(resolveSaveConfig({ save: "none" }, "/work", {}, "/agent"), {
 		mode: "none",
 	});
-	assert.deepEqual(resolveSaveConfig({ save: "project" }, "/work", {}, "/agent"), {
-		mode: "project",
-		outputDir: "/work/.pi/generated-images",
-	});
-	assert.deepEqual(resolveSaveConfig({ save: "global" }, "/work", {}, "/agent"), {
-		mode: "global",
-		outputDir: "/agent/generated-images",
-	});
+	assert.deepEqual(
+		resolveSaveConfig({ save: "project" }, "/work", {}, "/agent"),
+		{
+			mode: "project",
+			outputDir: "/work/.pi/generated-images",
+		},
+	);
+	assert.deepEqual(
+		resolveSaveConfig({ save: "global" }, "/work", {}, "/agent"),
+		{
+			mode: "global",
+			outputDir: "/agent/generated-images",
+		},
+	);
 	assert.deepEqual(
 		resolveSaveConfig(
 			{ save: "custom", saveDir: "assets/generated" },

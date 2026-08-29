@@ -1,7 +1,7 @@
 {
   "name": "@specode/pi-subscription-image",
   "version": "0.1.0",
-  "description": "Generate images in Pi with existing Codex and Grok subscriptions.",
+  "description": "Generate and edit images in Pi using existing Codex and Grok subscription account quotas.",
   "type": "module",
   "license": "MIT",
   "author": "Specode",

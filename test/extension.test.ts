@@ -66,16 +66,23 @@ function setup(
 	return { tool, calls, ctx };
 }
 
-test("registers the replacement generate_image tool", () => {
+test("registers the generate_image tool", () => {
 	const { tool } = setup("openai-codex");
 	assert.equal(tool.name, "generate_image");
-	assert.equal(tool.label, "订阅生图");
+	assert.equal(tool.label, "Image Generation");
+	assert.match(tool.description, /quota from existing .* subscription accounts/);
 	assert.equal(tool.executionMode, "parallel");
 });
 
 test("routes an openai-codex session to Codex", async () => {
 	const { tool, calls, ctx } = setup("openai-codex");
-	const result = await tool.execute("call-1", { prompt: "cat", save: "none" }, undefined, undefined, ctx);
+	const result = await tool.execute(
+		"call-1",
+		{ prompt: "cat", save: "none" },
+		undefined,
+		undefined,
+		ctx,
+	);
 	assert.deepEqual(calls, ["codex"]);
 	assert.equal(result.details.provider, "codex");
 	assert.equal(result.content[1].type, "image");
@@ -84,18 +91,27 @@ test("routes an openai-codex session to Codex", async () => {
 
 test("routes an xai session to Grok", async () => {
 	const { tool, calls, ctx } = setup("xai");
-	const result = await tool.execute("call-1", { prompt: "cat", save: "none" }, undefined, undefined, ctx);
+	const result = await tool.execute(
+		"call-1",
+		{ prompt: "cat", save: "none" },
+		undefined,
+		undefined,
+		ctx,
+	);
 	assert.deepEqual(calls, ["grok"]);
 	assert.equal(result.details.provider, "grok");
 	assert.equal(result.content[1].mimeType, "image/jpeg");
 });
 
-test("keeps legacy provider aliases compatible before validation", () => {
+test("maps provider aliases before validation", () => {
 	const { tool } = setup("xai");
-	assert.deepEqual(tool.prepareArguments({ provider: "openai", prompt: "cat" }), {
-		provider: "codex",
-		prompt: "cat",
-	});
+	assert.deepEqual(
+		tool.prepareArguments({ provider: "openai", prompt: "cat" }),
+		{
+			provider: "codex",
+			prompt: "cat",
+		},
+	);
 });
 
 test("returns inline images when optional disk persistence fails", async () => {

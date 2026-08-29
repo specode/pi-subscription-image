@@ -2,7 +2,7 @@
 
 [简体中文](./README.zh-CN.md)
 
-A [Pi](https://github.com/earendil-works/pi-mono) extension that exposes one `generate_image` tool backed by existing OpenAI Codex and xAI Grok subscription logins.
+A [Pi](https://github.com/earendil-works/pi-mono) image generation extension that exposes one `generate_image` tool and uses quota from existing OpenAI Codex and xAI Grok subscription accounts.
 
 ## Why
 
@@ -12,7 +12,7 @@ Image extensions often expose provider-specific tools with different parameters 
 
 - Reuses Pi's `openai-codex` OAuth login for Codex image generation.
 - Reuses Pi's `xai` subscription login for Grok Imagine.
-- Keeps the replacement tool name `generate_image` and `/img` command.
+- Provides the `generate_image` tool and `/img` command.
 - Automatically routes `openai-codex/*` sessions to Codex and `xai/*` sessions to Grok.
 - Lets callers explicitly select `provider=codex` or `provider=grok` from other sessions.
 - Supports up to four sequential generations per call.
@@ -96,11 +96,11 @@ The model calls `generate_image`. The public parameters are:
 | `referencedImagePaths` | Codex: up to five local images |
 | `numLastImagesToInclude` | Codex: recent conversation images to edit |
 
-Legacy explicit provider values remain compatible:
+Provider aliases are accepted:
 
 - `provider=openai` maps to `codex`.
 - `provider=xai` maps to `grok`.
-- Legacy `aspect_ratio` maps to `aspectRatio` before validation.
+- `aspect_ratio` maps to `aspectRatio` before validation.
 
 ## Routing
 
@@ -121,7 +121,7 @@ With `provider=auto` or no provider:
 | `global` | `~/.pi/agent/generated-images/` |
 | `custom` | `saveDir` or configured directory |
 
-The default is `global`, matching the extension this package replaces.
+The default save mode is `global`.
 
 ## Configuration
 
@@ -158,7 +158,7 @@ Environment overrides:
 - `PI_SUBSCRIPTION_IMAGE_GROK_MODEL`
 - `PI_SUBSCRIPTION_IMAGE_GROK_BASE_URL`
 
-Legacy `PI_IMAGE_SAVE_MODE` and `PI_IMAGE_SAVE_DIR` remain accepted.
+`PI_IMAGE_SAVE_MODE` and `PI_IMAGE_SAVE_DIR` are also accepted.
 
 ## Security and service boundaries
 
@@ -169,10 +169,6 @@ Legacy `PI_IMAGE_SAVE_MODE` and `PI_IMAGE_SAVE_DIR` remain accepted.
 - Grok generation uses the xAI image generation endpoint.
 - Subscription availability, quotas, regional access, and provider terms still apply.
 - Backend changes can require a package update.
-
-## Migration from a previous `generate_image` extension
-
-Only one extension should register `generate_image`. Disable or remove the previous implementation before enabling this package. The existing prompt, provider alias, aspect-ratio, count, and save parameters remain compatible.
 
 ## Development
 

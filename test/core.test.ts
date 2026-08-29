@@ -14,7 +14,7 @@ const PNG = Buffer.from(
 	"base64",
 );
 
-test("maps legacy provider and aspect-ratio arguments", () => {
+test("maps provider aliases and aspect-ratio arguments", () => {
 	assert.deepEqual(
 		prepareToolArguments({ provider: "xai", aspect_ratio: "16:9", prompt: "x" }),
 		{ provider: "grok", aspectRatio: "16:9", prompt: "x" },
@@ -35,11 +35,19 @@ test("routes by explicit provider, reference capability, session, then default",
 		"codex",
 	);
 	assert.equal(
-		resolveProvider({ requested: "auto", sessionProvider: "xai", requiresCodex: true }),
+		resolveProvider({
+			requested: "auto",
+			sessionProvider: "xai",
+			requiresCodex: true,
+		}),
 		"codex",
 	);
 	assert.equal(
-		resolveProvider({ requested: "auto", sessionProvider: "kimi-coding", defaultProvider: "grok" }),
+		resolveProvider({
+			requested: "auto",
+			sessionProvider: "kimi-coding",
+			defaultProvider: "grok",
+		}),
 		"grok",
 	);
 	assert.throws(
@@ -62,10 +70,7 @@ test("adds a Codex aspect-ratio prompt constraint", () => {
 
 test("parses retry-after seconds and HTTP dates", () => {
 	assert.equal(parseRetryAfterMs("1.5", 0), 1500);
-	assert.equal(
-		parseRetryAfterMs("Thu, 01 Jan 1970 00:00:05 GMT", 1000),
-		4000,
-	);
+	assert.equal(parseRetryAfterMs("Thu, 01 Jan 1970 00:00:05 GMT", 1000), 4000);
 	assert.equal(parseRetryAfterMs("bad", 0), undefined);
 });
 

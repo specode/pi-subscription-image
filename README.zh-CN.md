@@ -2,7 +2,7 @@
 
 [English](./README.md)
 
-一个 [Pi](https://github.com/earendil-works/pi-mono) 扩展：统一提供 `generate_image` 工具，复用现有 OpenAI Codex 与 xAI Grok 订阅登录生成图片。
+一个 [Pi](https://github.com/earendil-works/pi-mono) 图片生成扩展：统一提供 `generate_image` 工具，使用现有 OpenAI Codex 与 xAI Grok 订阅账户额度生成或编辑图片。
 
 ## 为什么需要它
 
@@ -12,7 +12,7 @@
 
 - 复用 Pi 的 `openai-codex` OAuth 登录生成 Codex 图片。
 - 复用 Pi 的 `xai` 订阅登录调用 Grok Imagine。
-- 保留替换前的 `generate_image` 工具名和 `/img` 命令。
+- 提供 `generate_image` 工具和 `/img` 命令。
 - `openai-codex/*` 会话自动选择 Codex，`xai/*` 会话自动选择 Grok。
 - 其他模型会话可显式传入 `provider=codex` 或 `provider=grok`。
 - 单次调用可顺序生成 1–4 张图片，避免并发消耗配额。
@@ -96,7 +96,7 @@ pi --no-extensions --offline -e /path/to/pi-subscription-image
 | `referencedImagePaths` | Codex 最多 5 张本地参考图 |
 | `numLastImagesToInclude` | Codex 使用最近的会话图片进行编辑 |
 
-兼容旧参数：
+支持以下参数别名：
 
 - `provider=openai` 映射为 `codex`。
 - `provider=xai` 映射为 `grok`。
@@ -121,7 +121,7 @@ pi --no-extensions --offline -e /path/to/pi-subscription-image
 | `global` | `~/.pi/agent/generated-images/` |
 | `custom` | `saveDir` 或配置目录 |
 
-默认使用 `global`，与被替换的旧扩展保持一致。
+默认保存模式为 `global`。
 
 ## 配置
 
@@ -158,7 +158,7 @@ pi --no-extensions --offline -e /path/to/pi-subscription-image
 - `PI_SUBSCRIPTION_IMAGE_GROK_MODEL`
 - `PI_SUBSCRIPTION_IMAGE_GROK_BASE_URL`
 
-继续兼容旧的 `PI_IMAGE_SAVE_MODE` 和 `PI_IMAGE_SAVE_DIR`。
+同时支持 `PI_IMAGE_SAVE_MODE` 和 `PI_IMAGE_SAVE_DIR`。
 
 ## 安全和服务边界
 
@@ -169,10 +169,6 @@ pi --no-extensions --offline -e /path/to/pi-subscription-image
 - Grok 使用 xAI 图片生成接口。
 - 订阅可用性、额度、地区限制和服务条款仍由对应 Provider 决定。
 - Provider 后端发生变化时，可能需要升级本包。
-
-## 从旧 `generate_image` 扩展迁移
-
-同一时间只能由一个扩展注册 `generate_image`。启用本包前，应停用或移除旧实现。原有 Prompt、provider 别名、比例、数量和保存参数继续兼容。
 
 ## 开发
 
