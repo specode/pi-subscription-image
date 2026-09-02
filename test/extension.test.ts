@@ -73,9 +73,9 @@ function setup(
 	return { tool, calls, requests, ctx };
 }
 
-test("registers the generate_image tool", () => {
+test("registers the generate_image_with_subscription tool", () => {
 	const { tool } = setup("openai-codex");
-	assert.equal(tool.name, "generate_image");
+	assert.equal(tool.name, "generate_image_with_subscription");
 	assert.equal(tool.label, "Image Generation");
 	assert.match(tool.description, /quota from existing .* subscription accounts/);
 	assert.equal(tool.executionMode, "parallel");

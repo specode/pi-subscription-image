@@ -2,7 +2,7 @@
 
 [简体中文](./README.zh-CN.md)
 
-A [Pi](https://github.com/earendil-works/pi-mono) image generation extension that exposes one `generate_image` tool and uses quota from existing OpenAI Codex and xAI Grok subscription accounts.
+A [Pi](https://github.com/earendil-works/pi-mono) image generation extension that exposes one `generate_image_with_subscription` tool and uses quota from existing OpenAI Codex and xAI Grok subscription accounts.
 
 ## Why
 
@@ -12,7 +12,7 @@ Image extensions often expose provider-specific tools with different parameters 
 
 - Reuses Pi's `openai-codex` OAuth login for Codex image generation.
 - Reuses Pi's `xai` subscription login for Grok Imagine.
-- Provides the `generate_image` tool and `/img` command.
+- Provides the `generate_image_with_subscription` tool and `/img` command.
 - Automatically routes `openai-codex/*` sessions to Codex and `xai/*` sessions to Grok.
 - Lets callers explicitly select `provider=codex` or `provider=grok` from other sessions.
 - Supports up to four sequential generations per call.
@@ -82,7 +82,7 @@ Direct command:
 /img a flat vector icon of a red panda
 ```
 
-The model calls `generate_image`. The public parameters are:
+The model calls `generate_image_with_subscription`. The public parameters are:
 
 | Parameter | Description |
 | --- | --- |

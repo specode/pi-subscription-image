@@ -44,6 +44,8 @@ import { generateGrokImage } from "./grok.ts";
 import { MAX_EDIT_IMAGES, resolveInputImages } from "./input-images.ts";
 import { saveGeneratedImage } from "./save.ts";
 
+const TOOL_NAME = "generate_image_with_subscription";
+
 const TOOL_PARAMS = Type.Object({
 	prompt: Type.String({
 		description:
@@ -295,16 +297,16 @@ export function registerSubscriptionImage(
 	dependencies: SubscriptionImageDependencies = DEFAULT_DEPENDENCIES,
 ): void {
 	pi.registerTool({
-		name: "generate_image",
+		name: TOOL_NAME,
 		label: "Image Generation",
 		description:
 			"Generate or edit raster images using quota from existing OpenAI Codex or xAI Grok subscription accounts. The provider follows the active openai-codex/xai session unless explicitly selected. Codex supports reference-image editing; Grok currently supports text-to-image only.",
 		promptSnippet:
 			"Generate or edit images using quota from Codex or Grok subscription accounts",
 		promptGuidelines: [
-			"Use generate_image when the user asks to generate, draw, edit, or create a raster image.",
-			"Do not call generate_image without a clear image request because it uses quota from the selected subscription account.",
-			"Let generate_image follow the current openai-codex/xai session provider unless the user explicitly requests Codex or Grok.",
+			`Use ${TOOL_NAME} when the user asks to generate, draw, edit, or create a raster image.`,
+			`Do not call ${TOOL_NAME} without a clear image request because it uses quota from the selected subscription account.`,
+			`Let ${TOOL_NAME} follow the current openai-codex/xai session provider unless the user explicitly requests Codex or Grok.`,
 			"Use provider=codex when reference-image editing is requested.",
 		],
 		parameters: TOOL_PARAMS,
@@ -438,7 +440,7 @@ export function registerSubscriptionImage(
 				return;
 			}
 			await pi.sendUserMessage(
-				`Use generate_image to create an image with this prompt: ${prompt}`,
+				`Use ${TOOL_NAME} to create an image with this prompt: ${prompt}`,
 			);
 		},
 	});

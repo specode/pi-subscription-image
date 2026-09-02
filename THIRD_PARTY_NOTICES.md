@@ -4,7 +4,7 @@ This project contains an independently maintained implementation informed by the
 
 ## pi-codex-image-gen
 
-- Source: https://github.com/jvm/pi-mono/tree/main/packages/pi-codex-image-gen
+- Source: <https://github.com/jvm/pi-mono/tree/main/packages/pi-codex-image-gen>
 - License: Apache License 2.0
 - Referenced areas: Codex OAuth credential resolution, Codex Responses `image_generation` request shape, SSE parsing, reference-image handling, and image validation.
 
@@ -13,7 +13,7 @@ The upstream package also includes assets derived from OpenAI Codex. Those asset
 ## pi-grok-cli
 
 - Copyright (c) 2026 kenryu42
-- Source: https://github.com/kenryu42/pi-grok-cli
+- Source: <https://github.com/kenryu42/pi-grok-cli>
 - License: MIT
 - Referenced areas: Grok Imagine request shape, retry policy, aspect-ratio normalization, and response validation.
 
@@ -21,4 +21,4 @@ This package retains the required copyright attribution and includes the upstrea
 
 ## Local modifications
 
-The implementation in this package unifies provider routing, parameter compatibility, save behavior, inline image results, configuration, and tests under a single `generate_image` tool. It does not bundle either upstream extension or their authentication stores.
+The implementation in this package unifies provider routing, parameter compatibility, save behavior, inline image results, configuration, and tests under a single `generate_image_with_subscription` tool. It does not bundle either upstream extension or their authentication stores.

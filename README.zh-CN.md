@@ -2,7 +2,7 @@
 
 [English](./README.md)
 
-一个 [Pi](https://github.com/earendil-works/pi-mono) 图片生成扩展：统一提供 `generate_image` 工具，使用现有 OpenAI Codex 与 xAI Grok 订阅账户额度生成或编辑图片。
+一个 [Pi](https://github.com/earendil-works/pi-mono) 图片生成扩展：统一提供 `generate_image_with_subscription` 工具，使用现有 OpenAI Codex 与 xAI Grok 订阅账户额度生成或编辑图片。
 
 ## 为什么需要它
 
@@ -12,7 +12,7 @@
 
 - 复用 Pi 的 `openai-codex` OAuth 登录生成 Codex 图片。
 - 复用 Pi 的 `xai` 订阅登录调用 Grok Imagine。
-- 提供 `generate_image` 工具和 `/img` 命令。
+- 提供 `generate_image_with_subscription` 工具和 `/img` 命令。
 - `openai-codex/*` 会话自动选择 Codex，`xai/*` 会话自动选择 Grok。
 - 其他模型会话可显式传入 `provider=codex` 或 `provider=grok`。
 - 单次调用可顺序生成 1–4 张图片，避免并发消耗配额。
@@ -82,7 +82,7 @@ pi --no-extensions --offline -e /path/to/pi-subscription-image
 /img 一枚红熊猫扁平矢量图标
 ```
 
-模型会调用 `generate_image`，参数如下：
+模型会调用 `generate_image_with_subscription`，参数如下：
 
 | 参数 | 说明 |
 | --- | --- |
