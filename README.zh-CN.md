@@ -15,7 +15,7 @@
 - 提供 `generate_image_with_subscription` 工具和 `/img` 命令。
 - `openai-codex/*` 会话自动选择 Codex，`xai/*` 会话自动选择 Grok。
 - 其他模型会话可显式传入 `provider=codex` 或 `provider=grok`。
-- 单次调用可顺序生成 1–4 张图片，避免并发消耗配额。
+- 单次调用可顺序生成 1–4 张图片，避免并发消耗配额；后续某张失败时，仍返回已经生成的图片。
 - Codex 支持最多 5 张 PNG、JPEG 或 WebP 参考图编辑。
 - 统一支持 `none`、`project`、`global`、`custom` 保存模式。
 - 即使可选的磁盘保存失败，仍返回已经生成成功的内联图片。
@@ -110,10 +110,8 @@ pi --no-extensions --offline -e /path/to/pi-subscription-image
 在支持工具 `outputSchema` / `structuredContent` 的 Pi 版本中，可通过 codemode 调用同一个工具。直接工具调用与 `/img` 的行为不变。
 
 ```js
-// @options: {"timeout_ms": 300000}
 const result = await tools.generate_image_with_subscription({
   prompt: "一只水彩风格的红熊猫",
-  save: "none",
 });
 for (const block of result.output) {
   if (block.type === "image") image(block);
@@ -121,9 +119,9 @@ for (const block of result.output) {
 }
 ```
 
-脚本收到 `{ provider, model, output, savedPaths, saveWarnings }`。`output` 包含文本块和可直接传给 `image()` 的 base64 图片块。即使使用 `save: "none"` 或可选的磁盘保存失败，也会返回图片；保存错误见 `saveWarnings`。生成或参数校验失败时，工具调用会 reject。
+脚本收到 `{ provider, model, output, generationErrors, savedPaths, saveWarnings }`。`output` 包含文本块和可直接传给 `image()` 的 base64 图片块。即使使用 `save: "none"` 或可选的磁盘保存失败，也会返回图片；保存错误见 `saveWarnings`。参数校验失败（包括 `save=custom` 未提供目录）会在消耗配额前 reject。第一张图片生成失败或调用被取消时，工具调用同样会 reject；启用保存时，取消前已经生成的图片仍会保存。多图请求中后续某张失败时，会停止生成并返回已经生成的图片，失败原因见 `generationErrors`。
 
-不要用 `text()`、`console` 或 `return` 输出整个结果或 base64 数据，应使用 `image(block)` 展示图片。生成可能需要数分钟，避免设置过短的脚本超时。这是现有订阅工具的适配，不是 `models.generateImages()` 接口。旧版 Pi 若不支持结构化工具结果，仍可直接调用工具，但无法把图片传入 codemode 脚本。
+不要用 `text()`、`console` 或 `return` 输出整个结果或 base64 数据，应使用 `image(block)` 展示图片。Pi codemode 单个脚本的输出上限为 16 MiB，base64 图片数据计入其中，多张较大的 Codex PNG 可能导致脚本失败。建议像示例一样保留默认保存，让图片在脚本展示前已写入磁盘；Codex 多图请求优先使用 `outputFormat: "webp"` 或 `"jpeg"`。生成可能需要数分钟，避免设置过短的脚本超时。这是现有订阅工具的适配，不是 `models.generateImages()` 接口。旧版 Pi 若不支持结构化工具结果，仍可直接调用工具，但无法把图片传入 codemode 脚本。
 
 ## 自动路由
 

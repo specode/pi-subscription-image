@@ -123,12 +123,14 @@ const TOOL_OUTPUT = Type.Object({
 			Type.Object({
 				type: Type.Literal("image"),
 				data: Type.String({
-					description: "Base64 image data. Pass this block to image(); do not print data as text.",
+					description:
+						"Base64 image data. Pass this block to image(); do not print data as text. It counts toward the 16 MiB script output limit; for several Codex images prefer outputFormat webp or jpeg.",
 				}),
 				mimeType: Type.String({ description: "Image MIME type: image/png, image/jpeg, or image/webp." }),
 			}),
 		]),
 	),
+	generationErrors: Type.Array(Type.String()),
 	savedPaths: Type.Array(Type.String()),
 	saveWarnings: Type.Array(Type.String()),
 });
@@ -146,6 +148,7 @@ interface GeneratedImage {
 
 interface GeneratedBatch {
 	images: GeneratedImage[];
+	generationErrors: string[];
 	model: string;
 	inputImageCount: number;
 	resolution?: GrokResolution;
@@ -218,12 +221,44 @@ function validateProviderParameters(
 	}
 }
 
+type ImageHandler = (image: GeneratedImage) => Promise<void>;
+
+async function generateSequentially(
+	count: number,
+	signal: AbortSignal | undefined,
+	generateOne: () => Promise<GeneratedImage>,
+	onImage: ImageHandler,
+): Promise<Pick<GeneratedBatch, "images" | "generationErrors">> {
+	const images: GeneratedImage[] = [];
+	for (let index = 0; index < count; index++) {
+		let image: GeneratedImage;
+		try {
+			image = await generateOne();
+		} catch (error) {
+			// Keep images whose quota is already spent; cancellation and total failure still reject.
+			if (signal?.aborted || images.length === 0) throw error;
+			const message = error instanceof Error ? error.message : String(error);
+			return {
+				images,
+				generationErrors: [
+					`Image ${index + 1}/${count} failed; returning ${images.length} generated image(s): ${message}`,
+				],
+			};
+		}
+		images.push(image);
+		await onImage(image);
+	}
+	if (signal?.aborted) throw new Error("Image generation was cancelled.");
+	return { images, generationErrors: [] };
+}
+
 async function generateWithCodex(options: {
 	params: ToolParams;
 	config: SubscriptionImageConfig;
 	ctx: ExtensionContext;
 	signal?: AbortSignal;
 	dependencies: SubscriptionImageDependencies;
+	onImage: ImageHandler;
 }): Promise<GeneratedBatch> {
 	const token =
 		await options.ctx.modelRegistry.getApiKeyForProvider("openai-codex");
@@ -249,24 +284,25 @@ async function generateWithCodex(options: {
 		options.params.prompt,
 		options.params.aspectRatio as AspectRatio | undefined,
 	);
-	const images: GeneratedImage[] = [];
-	for (let index = 0; index < count; index++) {
-		const result = await options.dependencies.generateCodexImage({
-			token,
-			accountId,
-			prompt,
-			model,
-			outputFormat,
-			sessionId: options.ctx.sessionManager.getSessionId(),
-			inputImages,
-			signal: options.signal,
-		});
-		images.push({
-			...result,
-			bytes: decodeBase64Image(result.b64, result.mimeType),
-		});
-	}
-	return { images, model, inputImageCount: inputImages.length };
+	const { images, generationErrors } = await generateSequentially(
+		count,
+		options.signal,
+		async () => {
+			const result = await options.dependencies.generateCodexImage({
+				token,
+				accountId,
+				prompt,
+				model,
+				outputFormat,
+				sessionId: options.ctx.sessionManager.getSessionId(),
+				inputImages,
+				signal: options.signal,
+			});
+			return { ...result, bytes: decodeBase64Image(result.b64, result.mimeType) };
+		},
+		options.onImage,
+	);
+	return { images, generationErrors, model, inputImageCount: inputImages.length };
 }
 
 async function generateWithGrok(options: {
@@ -275,6 +311,7 @@ async function generateWithGrok(options: {
 	ctx: ExtensionContext;
 	signal?: AbortSignal;
 	dependencies: SubscriptionImageDependencies;
+	onImage: ImageHandler;
 }): Promise<GeneratedBatch> {
 	const token = await options.ctx.modelRegistry.getApiKeyForProvider("xai");
 	if (!token) {
@@ -292,23 +329,31 @@ async function generateWithGrok(options: {
 		options.config,
 	);
 	const count = normalizeCount(options.params.n);
-	const images: GeneratedImage[] = [];
-	for (let index = 0; index < count; index++) {
-		const result = await options.dependencies.generateGrokImage({
-			token,
-			prompt: options.params.prompt.trim(),
-			model,
-			aspectRatio: (options.params.aspectRatio ?? "1:1") as AspectRatio,
-			resolution,
-			quality,
-			signal: options.signal,
-		});
-		images.push({
-			...result,
-			bytes: decodeBase64Image(result.b64, result.mimeType),
-		});
-	}
-	return { images, model, inputImageCount: 0, resolution, quality };
+	const { images, generationErrors } = await generateSequentially(
+		count,
+		options.signal,
+		async () => {
+			const result = await options.dependencies.generateGrokImage({
+				token,
+				prompt: options.params.prompt.trim(),
+				model,
+				aspectRatio: (options.params.aspectRatio ?? "1:1") as AspectRatio,
+				resolution,
+				quality,
+				signal: options.signal,
+			});
+			return { ...result, bytes: decodeBase64Image(result.b64, result.mimeType) };
+		},
+		options.onImage,
+	);
+	return {
+		images,
+		generationErrors,
+		model,
+		inputImageCount: 0,
+		resolution,
+		quality,
+	};
 }
 
 export function registerSubscriptionImage(
@@ -350,6 +395,8 @@ export function registerSubscriptionImage(
 				requiresCodex: hasReferenceInputs(params),
 			});
 			validateProviderParameters(provider, params);
+			// Resolve before generation so save configuration errors do not spend quota.
+			const saveConfig = resolveSaveConfig(params, ctx.cwd, config);
 			const count = normalizeCount(params.n);
 
 			onUpdate?.({
@@ -362,15 +409,11 @@ export function registerSubscriptionImage(
 				details: { provider, count },
 			});
 
-			const generated =
-				provider === "codex"
-					? await generateWithCodex({ params, config, ctx, signal, dependencies })
-					: await generateWithGrok({ params, config, ctx, signal, dependencies });
-			const saveConfig = resolveSaveConfig(params, ctx.cwd, config);
 			const savedPaths: string[] = [];
 			const saveWarnings: string[] = [];
-			for (const image of generated.images) {
-				if (saveConfig.mode === "none" || !saveConfig.outputDir) continue;
+			// Save each image as soon as it exists so a later cancellation cannot discard spent quota.
+			const onImage: ImageHandler = async (image) => {
+				if (saveConfig.mode === "none" || !saveConfig.outputDir) return;
 				try {
 					const path = await dependencies.saveGeneratedImage({
 						bytes: image.bytes,
@@ -382,7 +425,11 @@ export function registerSubscriptionImage(
 				} catch (error) {
 					saveWarnings.push(error instanceof Error ? error.message : String(error));
 				}
-			}
+			};
+			const generated =
+				provider === "codex"
+					? await generateWithCodex({ params, config, ctx, signal, dependencies, onImage })
+					: await generateWithGrok({ params, config, ctx, signal, dependencies, onImage });
 
 			const outputFormats = [
 				...new Set(
@@ -393,13 +440,16 @@ export function registerSubscriptionImage(
 				{
 					type: "text",
 					text: [
-						`Generated ${generated.images.length} image(s) via ${provider}/${generated.model} using subscription account quota.`,
+						`Generated ${generated.images.length}${generated.images.length < count ? ` of ${count} requested` : ""} image(s) via ${provider}/${generated.model} using subscription account quota.`,
 						provider === "codex"
 							? `Backend image model: ${CODEX_IMAGE_BACKEND_MODEL}.`
 							: undefined,
 						generated.resolution ? `Resolution: ${generated.resolution}.` : undefined,
 						generated.quality ? `Quality: ${generated.quality}.` : undefined,
 						`Output format${outputFormats.length === 1 ? "" : "s"}: ${outputFormats.join(", ")}.`,
+						generated.generationErrors.length
+							? `Generation errors: ${generated.generationErrors.join("; ")}`
+							: undefined,
 						savedPaths.length ? `Saved: ${savedPaths.join(", ")}.` : undefined,
 						saveWarnings.length
 							? `Save warnings: ${saveWarnings.join("; ")}.`
@@ -417,6 +467,7 @@ export function registerSubscriptionImage(
 				provider,
 				model: generated.model,
 				output: content,
+				generationErrors: generated.generationErrors,
 				savedPaths,
 				saveWarnings,
 			};
@@ -439,6 +490,7 @@ export function registerSubscriptionImage(
 					outputFormat: outputFormats.length === 1 ? outputFormats[0] : undefined,
 					outputFormats,
 					inputImageCount: generated.inputImageCount,
+					generationErrors: generated.generationErrors,
 					saveMode: saveConfig.mode,
 					savedPaths,
 					saveWarnings,

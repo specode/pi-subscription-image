@@ -15,7 +15,7 @@ Image extensions often expose provider-specific tools with different parameters 
 - Provides the `generate_image_with_subscription` tool and `/img` command.
 - Automatically routes `openai-codex/*` sessions to Codex and `xai/*` sessions to Grok.
 - Lets callers explicitly select `provider=codex` or `provider=grok` from other sessions.
-- Supports up to four sequential generations per call.
+- Supports up to four sequential generations per call; if a later image fails, the images already generated are still returned.
 - Supports Codex reference-image editing with up to five PNG, JPEG, or WebP inputs.
 - Preserves `none`, `project`, `global`, and `custom` save modes.
 - Returns valid images inline even when optional disk persistence fails.
@@ -110,10 +110,8 @@ Provider aliases are accepted:
 On Pi versions that support tool `outputSchema` / `structuredContent`, the same tool can be called from codemode. Direct tool calls and `/img` remain unchanged.
 
 ```js
-// @options: {"timeout_ms": 300000}
 const result = await tools.generate_image_with_subscription({
   prompt: "A red panda in watercolor",
-  save: "none",
 });
 for (const block of result.output) {
   if (block.type === "image") image(block);
@@ -121,9 +119,9 @@ for (const block of result.output) {
 }
 ```
 
-The script receives `{ provider, model, output, savedPaths, saveWarnings }`. `output` contains text and base64 image blocks accepted by `image()`. Images are returned even with `save: "none"` or when optional disk persistence fails; inspect `saveWarnings` for persistence errors. Generation/validation failures reject the tool call.
+The script receives `{ provider, model, output, generationErrors, savedPaths, saveWarnings }`. `output` contains text and base64 image blocks accepted by `image()`. Images are returned even with `save: "none"` or when optional disk persistence fails; inspect `saveWarnings` for persistence errors. Validation errors, including `save=custom` without a directory, reject before any quota is used. The tool call also rejects when the first image fails or the call is cancelled; with saving enabled, images generated before a cancellation are still saved. If a later image in a multi-image request fails, generation stops and the images already generated are returned with the failure in `generationErrors`.
 
-Do not print or return the whole result or base64 data with `text()`, `console`, or `return`; use `image(block)` to display it. Generation can take minutes, so avoid short script deadlines. This uses the existing subscription tool, not `models.generateImages()`. Older Pi versions without structured tool results retain direct tool use but cannot expose images to codemode scripts.
+Do not print or return the whole result or base64 data with `text()`, `console`, or `return`; use `image(block)` to display it. Pi codemode caps a script's output at 16 MiB, and base64 image data counts toward it, so several large Codex PNGs can make the script fail. Keep saving enabled, as in the example, so images are on disk before the script displays them, and prefer `outputFormat: "webp"` or `"jpeg"` for multi-image Codex requests. Generation can take minutes, so avoid short script deadlines. This uses the existing subscription tool, not `models.generateImages()`. Older Pi versions without structured tool results retain direct tool use but cannot expose images to codemode scripts.
 
 ## Routing
 
