@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Value } from "typebox/value";
 import { registerSubscriptionImage } from "../src/index.ts";
 
 const PNG_B64 =
@@ -79,6 +80,47 @@ test("registers the generate_image_with_subscription tool", () => {
 	assert.equal(tool.label, "Image Generation");
 	assert.match(tool.description, /quota from existing .* subscription accounts/);
 	assert.equal(tool.executionMode, "parallel");
+	assert.ok(tool.outputSchema);
+	assert.match(tool.description, /image\(block\)/);
+});
+
+for (const provider of ["openai-codex", "xai"] as const) {
+	test(`${provider} returns schema-valid image blocks for codemode without saving`, async () => {
+		const { tool, calls, ctx } = setup(provider);
+		const result = await tool.execute(
+			"call-codemode", { prompt: "cat", n: 2, save: "none" },
+			undefined, undefined, ctx,
+		);
+		// Codemode receives structuredContent through a JSON boundary, not content/details.
+		const structured = JSON.parse(JSON.stringify(result.structuredContent));
+		assert.equal(Value.Check(tool.outputSchema, structured), true);
+		assert.equal(structured.provider, provider === "xai" ? "grok" : "codex");
+		assert.equal(structured.model, result.details.model);
+		assert.deepEqual(structured.output, result.content);
+		assert.deepEqual(structured.savedPaths, []);
+		assert.deepEqual(structured.saveWarnings, []);
+		assert.equal(calls.length, 2);
+		assert.equal(structured.output[0].type, "text");
+		assert.equal(structured.output.length, 3);
+		for (const block of structured.output.slice(1)) {
+			assert.deepEqual(block, {
+				type: "image",
+				data: provider === "xai" ? JPEG_B64 : PNG_B64,
+				mimeType: provider === "xai" ? "image/jpeg" : "image/png",
+			});
+		}
+	});
+}
+
+test("includes saved paths in structured results without copying image data into details", async () => {
+	const { tool, ctx } = setup("openai-codex", { save: "project" });
+	const result = await tool.execute(
+		"call-saved", { prompt: "cat" }, undefined, undefined, ctx,
+	);
+	assert.ok(Value.Check(tool.outputSchema, result.structuredContent));
+	assert.deepEqual(result.structuredContent.savedPaths, ["/unused"]);
+	assert.deepEqual(result.structuredContent.saveWarnings, []);
+	assert.ok(!JSON.stringify(result.details).includes(PNG_B64));
 });
 
 test("routes an openai-codex session to the latest Codex routing model", async () => {
@@ -155,6 +197,10 @@ test("returns inline images when optional disk persistence fails", async () => {
 	assert.deepEqual(result.details.savedPaths, []);
 	assert.deepEqual(result.details.saveWarnings, ["disk full"]);
 	assert.match(result.content[0].text, /Save warnings: disk full/);
+	assert.ok(Value.Check(tool.outputSchema, result.structuredContent));
+	assert.deepEqual(result.structuredContent.output, result.content);
+	assert.deepEqual(result.structuredContent.savedPaths, []);
+	assert.deepEqual(result.structuredContent.saveWarnings, ["disk full"]);
 });
 
 test("rejects provider-specific parameters before execution", async () => {

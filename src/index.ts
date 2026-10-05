@@ -114,6 +114,25 @@ const TOOL_PARAMS = Type.Object({
 
 type ToolParams = Static<typeof TOOL_PARAMS>;
 
+const TOOL_OUTPUT = Type.Object({
+	provider: StringEnum(["codex", "grok"]),
+	model: Type.String(),
+	output: Type.Array(
+		Type.Union([
+			Type.Object({ type: Type.Literal("text"), text: Type.String() }),
+			Type.Object({
+				type: Type.Literal("image"),
+				data: Type.String({
+					description: "Base64 image data. Pass this block to image(); do not print data as text.",
+				}),
+				mimeType: Type.String({ description: "Image MIME type: image/png, image/jpeg, or image/webp." }),
+			}),
+		]),
+	),
+	savedPaths: Type.Array(Type.String()),
+	saveWarnings: Type.Array(Type.String()),
+});
+
 interface GeneratedImage {
 	b64: string;
 	bytes: Buffer;
@@ -300,7 +319,7 @@ export function registerSubscriptionImage(
 		name: TOOL_NAME,
 		label: "Image Generation",
 		description:
-			"Generate or edit raster images using quota from existing OpenAI Codex or xAI Grok subscription accounts. The provider follows the active openai-codex/xai session unless explicitly selected. Codex supports reference-image editing; Grok currently supports text-to-image only.",
+			"Generate or edit raster images using quota from existing OpenAI Codex or xAI Grok subscription accounts. The provider follows the active openai-codex/xai session unless explicitly selected. Codex supports reference-image editing; Grok currently supports text-to-image only. In codemode, iterate result.output: pass image blocks to image(block) and text blocks to text(block.text). Do not print the whole result or base64 data. Generation can take minutes.",
 		promptSnippet:
 			"Generate or edit images using quota from Codex or Grok subscription accounts",
 		promptGuidelines: [
@@ -310,6 +329,8 @@ export function registerSubscriptionImage(
 			"Use provider=codex when reference-image editing is requested.",
 		],
 		parameters: TOOL_PARAMS,
+		// Spread keeps direct-tool compatibility with older Pi types without outputSchema.
+		...{ outputSchema: TOOL_OUTPUT },
 		prepareArguments: (args) => prepareToolArguments(args) as ToolParams,
 		executionMode: "parallel",
 		async execute(_toolCallId, params: ToolParams, signal, onUpdate, ctx) {
@@ -368,10 +389,7 @@ export function registerSubscriptionImage(
 					generated.images.map((image) => outputFormatForMimeType(image.mimeType)),
 				),
 			];
-			const content: Array<
-				| { type: "text"; text: string }
-				| { type: "image"; data: string; mimeType: string }
-			> = [
+			const content: Static<typeof TOOL_OUTPUT>["output"] = [
 				{
 					type: "text",
 					text: [
@@ -395,8 +413,16 @@ export function registerSubscriptionImage(
 				content.push({ type: "image", data: image.b64, mimeType: image.mimeType });
 			}
 
+			const structuredContent: Static<typeof TOOL_OUTPUT> = {
+				provider,
+				model: generated.model,
+				output: content,
+				savedPaths,
+				saveWarnings,
+			};
 			return {
 				content,
+				structuredContent,
 				details: {
 					provider,
 					model: generated.model,

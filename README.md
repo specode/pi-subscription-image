@@ -105,6 +105,26 @@ Provider aliases are accepted:
 - `provider=xai` maps to `grok`.
 - `aspect_ratio` maps to `aspectRatio` before validation.
 
+## Codemode
+
+On Pi versions that support tool `outputSchema` / `structuredContent`, the same tool can be called from codemode. Direct tool calls and `/img` remain unchanged.
+
+```js
+// @options: {"timeout_ms": 300000}
+const result = await tools.generate_image_with_subscription({
+  prompt: "A red panda in watercolor",
+  save: "none",
+});
+for (const block of result.output) {
+  if (block.type === "image") image(block);
+  else text(block.text);
+}
+```
+
+The script receives `{ provider, model, output, savedPaths, saveWarnings }`. `output` contains text and base64 image blocks accepted by `image()`. Images are returned even with `save: "none"` or when optional disk persistence fails; inspect `saveWarnings` for persistence errors. Generation/validation failures reject the tool call.
+
+Do not print or return the whole result or base64 data with `text()`, `console`, or `return`; use `image(block)` to display it. Generation can take minutes, so avoid short script deadlines. This uses the existing subscription tool, not `models.generateImages()`. Older Pi versions without structured tool results retain direct tool use but cannot expose images to codemode scripts.
+
 ## Routing
 
 With `provider=auto` or no provider:

@@ -105,6 +105,26 @@ pi --no-extensions --offline -e /path/to/pi-subscription-image
 - `provider=xai` 映射为 `grok`。
 - 旧的 `aspect_ratio` 会在校验前映射为 `aspectRatio`。
 
+## Codemode
+
+在支持工具 `outputSchema` / `structuredContent` 的 Pi 版本中，可通过 codemode 调用同一个工具。直接工具调用与 `/img` 的行为不变。
+
+```js
+// @options: {"timeout_ms": 300000}
+const result = await tools.generate_image_with_subscription({
+  prompt: "一只水彩风格的红熊猫",
+  save: "none",
+});
+for (const block of result.output) {
+  if (block.type === "image") image(block);
+  else text(block.text);
+}
+```
+
+脚本收到 `{ provider, model, output, savedPaths, saveWarnings }`。`output` 包含文本块和可直接传给 `image()` 的 base64 图片块。即使使用 `save: "none"` 或可选的磁盘保存失败，也会返回图片；保存错误见 `saveWarnings`。生成或参数校验失败时，工具调用会 reject。
+
+不要用 `text()`、`console` 或 `return` 输出整个结果或 base64 数据，应使用 `image(block)` 展示图片。生成可能需要数分钟，避免设置过短的脚本超时。这是现有订阅工具的适配，不是 `models.generateImages()` 接口。旧版 Pi 若不支持结构化工具结果，仍可直接调用工具，但无法把图片传入 codemode 脚本。
+
 ## 自动路由
 
 没有指定 provider，或使用 `provider=auto` 时：
